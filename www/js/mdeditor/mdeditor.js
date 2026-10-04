@@ -1,6 +1,6 @@
 /* mdeditor 前端接管：核心 doc 新建/编辑页在 markdown 场景下摘除 zen-editor、挂载 Vditor，
  * 并将表单提交劫持到 mdeditor 自有写路由（Path B'，findings §13）。
- * 判定：create 页 URL 含 -markdown；edit 页 input[name=contentType]==markdown。
+ * 判定：create 页 form action 含 -markdown（SPA 下 pathname 不可用）；edit 页 input[name=contentType]==markdown。
  * 约定：#docForm 为核心表单；e.submitter 区分存稿按钮；window.loadPage / $.createLink 由 zin.js 提供。 */
 (function()
 {
@@ -15,7 +15,7 @@ var WEBR   = CONF.webRoot || '/';
 var vditor = null;
 var loadPromise = null;
 
-window.MDEDITOR_BOOT = {mounted: false, version: '0.2.3'};
+window.MDEDITOR_BOOT = {mounted: false, version: '0.2.4'};
 
 /* 服务端失败回调白名单：仅允许重新打开基础信息弹窗，其他值忽略（防任意代码执行）。 */
 var CALLBACK_ALLOWLIST = [
@@ -51,11 +51,13 @@ function linkTo(module, action, vars)
     return WEBR + 'index.php?m=' + encodeURIComponent(module) + '&f=' + encodeURIComponent(action) + (vars ? '&' + vars : '');
 }
 
-function isMarkdownCreate()
+/* SPA（index.html?open=…）下 location.pathname 恒为 /index.html，判定必须用表单自身的 action。 */
+function isMarkdownCreate(form)
 {
-    var p = location.pathname;
-    if(/\/doc-create-.*-markdown\.html/.test(p)) return true;
-    if(/(^|\/)doc-create\.html/.test(p) || /[?&]f=create(&|$)/.test(location.search)) return /[?&]type=markdown(&|$)/.test(location.search);
+    var action = (form && (form.getAttribute('action') || form.action)) || location.pathname;
+    if(/\/doc-create[^/]*-markdown(\.html|\/|$)/.test(action)) return true;
+    if(/\/doc-create-.*-markdown\.html/.test(location.pathname)) return true;
+    if(/(^|\/)doc-create\.html/.test(location.pathname) || /[?&]f=create(&|$)/.test(location.search)) return /[?&]type=markdown(&|$)/.test(location.search);
     return false;
 }
 
@@ -78,9 +80,12 @@ function uploadFormat(files, response)
     return {code: 1, msg: (parsed && parsed.message) || 'upload failed', data: {errMap: [], fileList: []}};
 }
 
-function getDocID()
+function getDocID(form)
 {
-    var m = location.pathname.match(/\/doc-edit-(\d+)(?:\.html|\/)/);
+    var action = (form && (form.getAttribute('action') || form.action)) || '';
+    var m = action.match(/\/doc-edit-(\d+)/);
+    if(m) return m[1];
+    m = location.pathname.match(/\/doc-edit-(\d+)(?:\.html|\/)/);
     if(m) return m[1];
     m = location.search.match(/[?&]docID=(\d+)/);
     return m ? m[1] : '';
@@ -197,8 +202,8 @@ function submitToPlugin(form, submitter)
 
     var url = form.__mdMode === 'create'
         ? linkTo('mdeditor', 'create')
-        : linkTo('mdeditor', 'edit', 'docID=' + getDocID());
-    if(form.__mdMode === 'edit' && !getDocID()) { fail('mdeditor: docID not found'); return; }
+        : linkTo('mdeditor', 'edit', 'docID=' + getDocID(form));
+    if(form.__mdMode === 'edit' && !getDocID(form)) { fail('mdeditor: docID not found'); return; }
 
     var fd = new FormData(form);
 
@@ -239,12 +244,14 @@ function scan()
 {
     var form = document.querySelector('#docForm');
     if(!form || form.dataset.mdMounted) return;
-    var need = isMarkdownCreate() || (form.querySelector('zen-editor') && isMarkdownEdit(form));
+    var need = isMarkdownCreate(form) || (form.querySelector('zen-editor') && isMarkdownEdit(form));
     if(!need) return;
     loadVditor().then(function()
     {
         var f = document.querySelector('#docForm');
-        if(f && !f.dataset.mdMounted && (isMarkdownCreate() || isMarkdownEdit(f))) mount(f, isMarkdownCreate() ? 'create' : 'edit');
+        if(!f || f.dataset.mdMounted) return;
+        if(isMarkdownCreate(f)) mount(f, 'create');
+        else if(isMarkdownEdit(f)) mount(f, 'edit');
     }).catch(function() {});
 }
 

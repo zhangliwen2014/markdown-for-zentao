@@ -2,7 +2,7 @@ name: Markdown文档编辑插件
 code: mdeditor
 type: extension
 abstract: 为禅道文档模块提供 Markdown 编辑与渲染：新建可选 Markdown 类型、查看自动渲染、编辑自动挂载 Vditor、支持粘贴/拖入 md 文件与 md 附件在线查看。
-version: 0.2.3
+version: 0.2.4
 author: Liwen.Zhang
 email: dev@example.com
 site: https://www.zentao.net
