@@ -34,7 +34,7 @@ $version     = $config->mdeditor->version ?? '0.2.15';
 $js          = $webRoot . 'js/mdeditor/mdeditor.js?v=' . $version;
 $confJson    = json_encode(array('cdn' => $cdn, 'webRoot' => $webRoot), JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT);
 $isMarkdown  = (($doc->contentType ?? '') === 'markdown');
-$exportURL   = $app->createLink('mdeditor', 'export', "docID={$docID}");
+$exportURL   = helper::createLink('mdeditor', 'export', "docID={$docID}");
 $exportText  = (string)($lang->mdeditor->download ?? '下载');
 $exportHint  = (string)($lang->mdeditor->download ?? '下载');
 
