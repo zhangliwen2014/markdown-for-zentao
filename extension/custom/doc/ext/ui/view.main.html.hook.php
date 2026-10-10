@@ -44,7 +44,7 @@ $exportJson = json_encode(array('url' => $exportURL, 'text' => $exportText, 'hin
 $exportJs   = '(function(){var C=' . $exportJson . ';'
             . 'function ins(){var tb=document.querySelector("#docToolbar");if(!tb)return;'
             . 'if(tb.querySelector(".mdexport-btn"))return;'
-            . 'var a=document.createElement("a");a.href=C.url;a.className="btn btn-link square mdexport-btn";a.setAttribute("title",C.hint);a.setAttribute("aria-label",C.hint);'
+            . 'var a=document.createElement("a");a.href=C.url;a.className="btn btn-link square mdexport-btn";a.setAttribute("title",C.hint);a.setAttribute("aria-label",C.hint);a.target="_blank";a.rel="noopener";'
             . 'a.innerHTML="\\u4e0b\\u8f7d";'
             . 'var last=tb.lastElementChild;last?tb.insertBefore(a,last):tb.appendChild(a);}'
             . 'ins();'

@@ -20,7 +20,8 @@ $config->doc->actionList['mdexport'] = array(
     'hint'   => $hint,
     'text'   => $hint,
     'url'    => helper::createLink('mdeditor', 'export', 'docID={id}') . '?_single=1',
-    'target' => '_self',
+    'target' => '_blank',
+    'rel'    => 'noopener',
 );
 
 $menu = &$config->doc->dtable->fieldList['actions']['menu'];
