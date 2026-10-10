@@ -17,7 +17,7 @@ var WEBR   = CONF.webRoot  || BASE;
 var vditor = null;
 var loadPromise = null;
 
-window.MDEDITOR_BOOT = {mounted: false, version: '0.2.13'};
+window.MDEDITOR_BOOT = {mounted: false, version: '0.2.14'};
 
 /* 轻量诊断：仅当 window.MDEDITOR_DEBUG 为真时输出，默认静默（不污染生产控制台）。
  * 复现 SPA 编辑/新建接管问题时，控制台执行 window.MDEDITOR_DEBUG=1 再站内跳转即可看到判定链路。 */
@@ -373,5 +373,24 @@ else scan();
  *   IndexedDB 本地缓存路径 → 只发 pagecaheload.app（zin.js:772），不发 pagerender.app
  * config.clientCache 默认为 true，第二次站内进入同一 URL 会走缓存路径；必须同时监听两个事件。 */
 if(window.jQuery) jQuery(document).on('pagerender.app pagecaheload.app pageload.app', scan);
+
+/* 事件时序缺口：mdeditor.js 是异步 <script src> 挂载，首次进 doc-edit 时 pagerender.app
+ * 在 script 下载 eval 之前就已经触发（zin.js:644 是同步 forEach 尾，非等到 async script onload）。
+ * 所以第一次 SPA 进编辑时我们的事件处理器还没注册，错过这一帧；下一次同 URL 走缓存路径又不发
+ * pagerender.app；只能靠硬刷新走整页 HTML 才能命中。用 MutationObserver 兜底：观察 body 子树，
+ * 30ms 去抖后调 scan，任何 DOM 变化都能触发一次判定（scan 内部有 mounted 幂等保护）。 */
+if(window.MutationObserver)
+{
+    var moTimer = null;
+    var moFire  = function()
+    {
+        if(moTimer) return;
+        moTimer = setTimeout(function() { moTimer = null; scan(); }, 30);
+    };
+    var mo = new MutationObserver(moFire);
+    mo.observe(document.body, {childList: true, subtree: true});
+    /* body 被替换的极端场景：改挂 documentElement。 */
+    if(!document.body) mo.observe(document.documentElement, {childList: true, subtree: true});
+}
 
 })();
