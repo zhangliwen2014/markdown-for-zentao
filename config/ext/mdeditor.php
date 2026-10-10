@@ -9,7 +9,7 @@ $config->mdeditor = new stdclass();
 $config->mdeditor->enable       = true;   // 总开关：false 时所有 hook 直接 return，等价未安装
 $config->mdeditor->rawHtml      = false;  // 渲染侧 raw HTML 开关，默认禁（DESIGN §7 XSS）
 $config->mdeditor->vditorCdn    = '/js/mdeditor/vditor'; // 本地自托管，禁止外部 CDN（锁版本入库）
-$config->mdeditor->version      = '0.2.14'; // 资源版本：拼到 mdeditor.js 的 ?v= 上做缓存失效（findings §14 缓存滞后）
+$config->mdeditor->version      = '0.2.15'; // 资源版本：拼到 mdeditor.js 的 ?v= 上做缓存失效（findings §14 缓存滞后）
 $config->mdeditor->stepAsideVersion = '21.7.6'; // R8 让路版本阈值：当前禅道 >= 此版本时插件静默让路（与原生入口特性探测取并集）
 
 /* 权限委派：mdeditor 路由复用 doc 权限，零 SQL、零 hook（commonModel::hasPriv 一手确认，findings §13）。 */
@@ -17,7 +17,12 @@ $config->mdeditor->groupPrivs = array(
     'create'   => 'doc|create',
     'edit'     => 'doc|edit',
     'viewfile' => 'doc|view',
+    'export'   => 'doc|view',
 );
+
+/* doc 列表 dtable 的下载入口注入见 extension/custom/doc/ext/config/mdeditor.php：
+ * 该文件在 doc 模块 config 与 lang 均已加载后运行，能安全读 $lang->doc->download / helper::createLink。
+ * 此处（loadMainConfig 阶段）$lang 尚未装配 doc 相关键，不适合做 actionList 注入。 */
 
 /* Path B'：对插件自有写路由（POST）精准关闭 L0 破坏性过滤，保证 markdown 原文逐字节入库。
  * 门控条件：POST + URI 精确命中 mdeditor 的 create/edit 写路由（pathinfo 与 index.php?m= 两种形态）。

@@ -2,20 +2,21 @@
 /**
  * R2/R6 文档浏览页 hook（中间段必须存在：view.main.html.hook.php，
  * view.html.hook.php 永不命中 glob，findings §10）。
- * M5：contentType=markdown 时接管 #docEditor 渲染；其余页面静默。
  *
- * 渲染逻辑不在本 hook 内联执行：zin SPA 用 morph 注入 html 片段，updatePageWithHtml 会剥掉其中的 <script>
- * （仅保留 window.config={），故无论内联 IIFE 还是 <script src>，写在 html 通道都在 SPA 导航
- * （含新建后 loadPage(doc-view) 跳转）下失效。正确做法与新建/编辑一致：
- *   1) 把 markdown 原文放进普通 DOM 节点的文本内容（#md-doc-src 的 textContent，走 html 通道，morph 注入后可读）；
- *      原文经 htmlspecialchars(ENT_QUOTES) 转义，textContent 自动还原，逐字节保真且保留真实换行；
- *   2) 接管脚本的加载改走 pageJS 通道（\zin\pageJS）：updatePageJS 用 replaceWith 注入并同步执行，
- *      SPA 与整页加载都会跑；mdeditor.js 的即时 scan + pagerender.app 监听在每次渲染后接管。
+ * 两类输出：
+ *   A. 所有 contentType 通用：注入 #docToolbar 的下载按钮（走 pageJS，SPA + 整页都跑）。
+ *   B. 仅 contentType=markdown：#md-doc-src 承载原文 + mdeditor.js 接管加载。
+ *
+ * 下载按钮不能靠 html 通道：zin 用 morph 注入 html 片段，updatePageWithHtml 剥 <script>；且 html
+ * 通道内容进的是 main 容器而不是 docToolbar。改走 pageJS 通道（updatePageJS 用 replaceWith 注入
+ * 并同步执行），在 mount 时用原生 DOM API 把 <a> 插到 #docToolbar 内 dropdown 之前。幂等：已存在
+ * .mdexport-btn 则跳过；每次渲染都会重跑，覆盖 SPA 导航后 morph 重建 toolar 的情况。
+ *
+ * markdown 渲染逻辑不变，仍在 html 通道放隐藏的 #md-doc-src（textContent 承载原文，逐字节保真），
+ * 加载器走 pageJS。历史 <script src> 写法在 SPA 下剥 script，findings §16。
  *
  * ZIN 渲染时 hook 在 context::includeHooks() 方法作用域 include（lib/zin/core/context.class.php:366），
  * 视图变量须从 $this->data 取；非 ZIN parseDefault 路径可直接用 $doc。
- * 曾用 data-md 属性 + json_encode 承载原文：但 json 把真实换行转义成 \n，而前端 getAttribute 不做
- * JSON 解码，导致 Vditor 收到单行转义串、markdown 完全不渲染（本 bug 根因，findings §16）。
  */
 global $config, $app;
 
@@ -25,14 +26,33 @@ if(($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'GET') return;
 
 if(!isset($doc) || !is_object($doc)) $doc = (isset($this) && property_exists($this, 'data') && is_array($this->data)) ? ($this->data['doc'] ?? null) : null;
 if(empty($doc) || !is_object($doc)) return;
-if(($doc->contentType ?? '') !== 'markdown') return;
 
-$webRoot = $app->getWebRoot();
-$cdn     = $webRoot . ltrim($config->mdeditor->vditorCdn, '/');
-$version = $config->mdeditor->version ?? '0.2.11';
-$docID   = (int)($doc->id ?? 0);
-$js      = $webRoot . 'js/mdeditor/mdeditor.js?v=' . $version;
-$confJson = json_encode(array('cdn' => $cdn, 'webRoot' => $webRoot), JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT);
+$docID       = (int)($doc->id ?? 0);
+$webRoot     = $app->getWebRoot();
+$cdn         = $webRoot . ltrim($config->mdeditor->vditorCdn, '/');
+$version     = $config->mdeditor->version ?? '0.2.15';
+$js          = $webRoot . 'js/mdeditor/mdeditor.js?v=' . $version;
+$confJson    = json_encode(array('cdn' => $cdn, 'webRoot' => $webRoot), JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT);
+$isMarkdown  = (($doc->contentType ?? '') === 'markdown');
+$exportURL   = $app->createLink('mdeditor', 'export', "docID={$docID}");
+$exportText  = (string)($lang->mdeditor->download ?? '下载');
+$exportHint  = (string)($lang->mdeditor->download ?? '下载');
+
+/* 下载按钮注入（所有 contentType）。 */
+$exportJson = json_encode(array('url' => $exportURL, 'text' => $exportText, 'hint' => $exportHint), JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT);
+$exportJs   = '(function(){var C=' . $exportJson . ';'
+            . 'function ins(){var tb=document.querySelector("#docToolbar");if(!tb)return;'
+            . 'if(tb.querySelector(".mdexport-btn"))return;'
+            . 'var a=document.createElement("a");a.href=C.url;a.className="btn btn-link square mdexport-btn";a.setAttribute("title",C.hint);a.setAttribute("aria-label",C.hint);'
+            . 'a.innerHTML="\\u4e0b\\u8f7d";'
+            . 'var last=tb.lastElementChild;last?tb.insertBefore(a,last):tb.appendChild(a);}'
+            . 'ins();'
+            . 'if(window.jQuery){jQuery(document).on("pagerender.app pagecaheload.app pageload.app",ins);}'
+            . 'if(window.MutationObserver){var t=null;var fire=function(){if(t)return;t=setTimeout(function(){t=null;ins();},80);};var mo=new MutationObserver(fire);mo.observe(document.body,{childList:true,subtree:true});}})();';
+\zin\pageJS($exportJs);
+
+/* 以下 markdown 特有：#md-doc-src + 加载器。 */
+if(!$isMarkdown) return;
 
 /* SPA 下 zin.js updatePageWithHtml 会剥掉 html 片段里的 <script>（仅保留 window.config={），
  * 历史版本把接管脚本写成 html 通道的 <script src>，站内导航（含新建后 loadPage(doc-view) 跳转）
