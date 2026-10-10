@@ -10,12 +10,21 @@ if(window.__MDEDITOR_INIT) return;
 window.__MDEDITOR_INIT = true;
 
 var CONF   = window.MDEDITOR_CONFIG || {};
-var CDN    = CONF.cdn    || '/js/mdeditor/vditor';
-var WEBR   = CONF.webRoot || '/';
+/* SPA 下 config 由 pageJS 通道在加载前同步注入；仍兜底 window.config.webRoot（configJS 通道 SPA 亦维护）。 */
+var BASE   = (window.config && window.config.webRoot) || '/';
+var CDN    = CONF.cdn      || BASE + 'js/mdeditor/vditor';
+var WEBR   = CONF.webRoot  || BASE;
 var vditor = null;
 var loadPromise = null;
 
-window.MDEDITOR_BOOT = {mounted: false, version: '0.2.4'};
+window.MDEDITOR_BOOT = {mounted: false, version: '0.2.12'};
+
+/* 轻量诊断：仅当 window.MDEDITOR_DEBUG 为真时输出，默认静默（不污染生产控制台）。
+ * 复现 SPA 编辑/新建接管问题时，控制台执行 window.MDEDITOR_DEBUG=1 再站内跳转即可看到判定链路。 */
+function dbg()
+{
+    if(window.MDEDITOR_DEBUG && window.console && console.debug) console.debug.apply(console, ['[mdeditor]'].concat([].slice.call(arguments)));
+}
 
 /* 服务端失败回调白名单：仅允许重新打开基础信息弹窗，其他值忽略（防任意代码执行）。 */
 var CALLBACK_ALLOWLIST = [
@@ -93,7 +102,17 @@ function getDocID(form)
 
 function mount(form, mode)
 {
-    if(form.dataset.mdMounted) return;
+    /* zin morph 会复用 #docForm DOM 节点跨文档导航：dataset.mdMounted 粘滞而形态可能已重注入新 zen-editor。
+     * 若已被复用（mounted=1 但当前仍有原生编辑器或已缺失 #md-vditor-box），必须先销毁旧实例与残留节点再重建，
+     * 否则 SPA 站内进入新 doc 的编辑/新建页时接管会静默失败，用户看到 wiki 工具栏。 */
+    var remount = form.dataset.mdMounted === '1';
+    if(remount)
+    {
+        dbg('mount: remounting', mode);
+        if(window.MDEDITOR_BOOT && window.MDEDITOR_BOOT.vditor) { try { window.MDEDITOR_BOOT.vditor.destroy(); } catch(e) {} window.MDEDITOR_BOOT.vditor = null; }
+        var oldBox = form.querySelector('#md-vditor-box'); if(oldBox && oldBox.parentNode) oldBox.parentNode.removeChild(oldBox);
+        var oldTa  = form.querySelector('textarea[name=content]'); if(oldTa && oldTa.parentNode) oldTa.parentNode.removeChild(oldTa);
+    }
     form.dataset.mdMounted = '1';
 
     var container = form.querySelector('.editor-container');
@@ -148,7 +167,7 @@ function mount(form, mode)
         mode:        'ir',
         'edit-mode': 'both',
         height:      height,
-        value:       initial,
+        value:       normalizeTables(initial),
         placeholder: 'Markdown ...',
         lang:        (document.documentElement.lang || '').indexOf('zh') === 0 ? 'zh_CN' : 'en_US',
         toolbar:     ['edit-mode','|','bold','italic','strike','headings','|','list','ordered-list','check','outdent','indent','|','quote','line','code','inline-code','insert-before','insert-after','|','link','image','table','|','upload','emoji','math','|','outline','preview','|','fullscreen','devtools','info'],
@@ -239,20 +258,111 @@ function fail(message)
     if(window.zui && zui.Messager) zui.Messager.show({content: msg, type: 'danger', className: 'bg-danger text-canvas gap-2 messager-fail'});
 }
 
-/* 扫描挂载：SPA 片段渲染后复用。找不到目标即静默退出（R8 防御式）。 */
+/* 查看页渲染（R2）：与新建/编辑一致，必须走「外部脚本 + pagerender.app」路径，
+ * 而非 hook 内联 <script> IIFE——zin morph 注入片段时不会执行内联脚本，SPA 下（含新建后
+ * loadPage(doc-view) 跳转）必然不渲染，正是本 bug 根因。markdown 原文由 hook 落到 #md-doc-src
+ * 节点的文本内容（textContent，普通 DOM 节点，morph 注入后即可读，不依赖脚本执行；
+ * 且保留真实换行，避免 json 属性转义成 \n 导致前端不解码、Vditor 收到单行串的渲染 bug）。 */
+function renderMarkdownView()
+{
+    var src = document.getElementById('md-doc-src');
+    if(!src) return;
+    var host = document.getElementById('docEditor');
+    if(!host) return;
+    var docId = src.getAttribute('data-doc') || '';
+    if(host.getAttribute('data-md-doc') === docId) return;
+    var md = src.textContent;                 /* 原文经 htmlspecialchars 转义，textContent 自动还原且保留真实换行 */
+    if(!md) return;
+    host.setAttribute('data-md-doc', docId);
+    loadVditor().then(function() { paintView(host, md); }, function() { fallbackView(host, md); });
+}
+
+/* 渲染侧表格容错：粘贴/导入的 Markdown 常在每个表格数据行之间混入空行，
+ * 导致 GFM 表格失效、预览显示为竖线原文（findings §15，doc-276 现象）。
+ * 仅在送给 Vditor 预览/编辑的副本上折叠「位于两行表格行之间的空行」，
+ * 绝不改动存储原文（逐字节原则保留）。表格与段落之间的空行不受影响。 */
+function normalizeTables(s)
+{
+    var lines = s.replace(/\r\n?/g, '\n').split('\n');
+    var isBlank = function(x) { return x.replace(/\s/g, '') === ''; };
+    var isRow   = function(x) { return /^\s*\|.*\|\s*$/.test(x); };
+    var out = [];
+    for(var i = 0; i < lines.length; i++)
+    {
+        if(isBlank(lines[i]))
+        {
+            var prev = out.length ? out[out.length - 1] : '';
+            var k = i + 1;
+            while(k < lines.length && isBlank(lines[k])) k++;
+            var next = k < lines.length ? lines[k] : '';
+            if(isRow(prev) && isRow(next)) continue;
+        }
+        out.push(lines[i]);
+    }
+    return out.join('\n');
+}
+
+function paintView(host, md)
+{
+    while(host.firstChild) host.removeChild(host.firstChild);
+    try
+    {
+        window.Vditor.preview(host, normalizeTables(md), {mode: 'both', cdn: CDN, lang: (document.documentElement.lang || '').indexOf('zh') === 0 ? 'zh_CN' : 'en_US'});
+    }
+    catch(e) { fallbackView(host, md); }
+}
+
+function fallbackView(host, md)
+{
+    while(host.firstChild) host.removeChild(host.firstChild);
+    var pre = document.createElement('pre');
+    pre.className = 'whitespace-pre-wrap';
+    pre.textContent = md;
+    host.appendChild(pre);
+}
+
+/* 扫描挂载：SPA 片段渲染后复用。找不到目标即静默退出（R8 防御式）。
+ * 支持 morph 复用：#docForm 可能带着上一文档的 dataset.mdMounted 出现，但 morph 会在其中
+ * 重注入新的 <zen-editor>。判定必须看"是否仍有原生编辑器"，而不是仅看 mounted 粘滞标记。 */
 function scan()
 {
+    renderMarkdownView();
+
     var form = document.querySelector('#docForm');
-    if(!form || form.dataset.mdMounted) return;
-    var need = isMarkdownCreate(form) || (form.querySelector('zen-editor') && isMarkdownEdit(form));
-    if(!need) return;
+    if(!form) { dbg('scan: no #docForm', location.pathname); return; }
+    var hasNative = !!form.querySelector('zen-editor');
+    var hasBox    = !!form.querySelector('#md-vditor-box');
+    var ctEl      = form.querySelector('input[name=contentType]');
+    dbg('scan', {path: location.pathname + location.search, mounted: form.dataset.mdMounted || '0', hasNative: hasNative, hasBox: hasBox, ct: ctEl ? ctEl.value : ''});
+
+    /* 已经接管完成且 morph 未重注入原生编辑器：幂等早退，避免重复 mount 打断用户输入。 */
+    if(form.dataset.mdMounted === '1' && hasBox && !hasNative) return;
+
+    var need = isMarkdownCreate(form) || (hasNative && isMarkdownEdit(form));
+    if(!need)
+    {
+        /* morph 复用节点的另一种情况：从 markdown 表单跳到 HTML 表单，mdMounted 粘滞但新表单不该被接管。
+         * 卸载残留、清理标记，避免 document 层 submit 捕获错劫 HTML 文档保存。 */
+        if(form.dataset.mdMounted === '1')
+        {
+            dbg('scan: morph switched to non-markdown form, unmounting');
+            if(window.MDEDITOR_BOOT && window.MDEDITOR_BOOT.vditor) { try { window.MDEDITOR_BOOT.vditor.destroy(); } catch(e) {} window.MDEDITOR_BOOT.vditor = null; }
+            var staleBox = form.querySelector('#md-vditor-box'); if(staleBox && staleBox.parentNode) staleBox.parentNode.removeChild(staleBox);
+            var staleCf  = form.querySelector('textarea[name=content]'); if(staleCf && staleCf.parentNode) staleCf.parentNode.removeChild(staleCf);
+            delete form.dataset.mdMounted;
+            delete form.__mdMode;
+        }
+        return;
+    }
+
     loadVditor().then(function()
     {
         var f = document.querySelector('#docForm');
-        if(!f || f.dataset.mdMounted) return;
-        if(isMarkdownCreate(f)) mount(f, 'create');
-        else if(isMarkdownEdit(f)) mount(f, 'edit');
-    }).catch(function() {});
+        if(!f) { dbg('scan async: form gone'); return; }
+        var mode = isMarkdownCreate(f) ? 'create' : (isMarkdownEdit(f) ? 'edit' : '');
+        if(!mode) { dbg('scan async: no mode'); return; }
+        mount(f, mode);
+    }).catch(function(e) { dbg('loadVditor failed', String(e)); });
 }
 
 if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', scan);
