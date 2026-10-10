@@ -19,7 +19,7 @@ $config->doc->actionList['mdexport'] = array(
     'icon'   => 'download',
     'hint'   => $hint,
     'text'   => $hint,
-    'url'    => helper::createLink('mdeditor', 'export', 'docID={id}'),
+    'url'    => helper::createLink('mdeditor', 'export', 'docID={id}&_single=1'),
     'target' => '_self',
 );
 
