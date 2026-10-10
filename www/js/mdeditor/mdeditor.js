@@ -17,7 +17,7 @@ var WEBR   = CONF.webRoot  || BASE;
 var vditor = null;
 var loadPromise = null;
 
-window.MDEDITOR_BOOT = {mounted: false, version: '0.2.12'};
+window.MDEDITOR_BOOT = {mounted: false, version: '0.2.13'};
 
 /* 轻量诊断：仅当 window.MDEDITOR_DEBUG 为真时输出，默认静默（不污染生产控制台）。
  * 复现 SPA 编辑/新建接管问题时，控制台执行 window.MDEDITOR_DEBUG=1 再站内跳转即可看到判定链路。 */
@@ -368,6 +368,10 @@ function scan()
 if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', scan);
 else scan();
 
-if(window.jQuery) jQuery(document).on('pagerender.app', scan);
+/* zin.js 有两条 renderPageData 出口：
+ *   网络拉取路径 → 发 pagerender.app（zin.js:644）
+ *   IndexedDB 本地缓存路径 → 只发 pagecaheload.app（zin.js:772），不发 pagerender.app
+ * config.clientCache 默认为 true，第二次站内进入同一 URL 会走缓存路径；必须同时监听两个事件。 */
+if(window.jQuery) jQuery(document).on('pagerender.app pagecaheload.app pageload.app', scan);
 
 })();
