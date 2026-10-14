@@ -9,7 +9,7 @@ $config->mdeditor = new stdclass();
 $config->mdeditor->enable       = true;   // 总开关：false 时所有 hook 直接 return，等价未安装
 $config->mdeditor->rawHtml      = false;  // 渲染侧 raw HTML 开关，默认禁（DESIGN §7 XSS）
 $config->mdeditor->vditorCdn    = '/js/mdeditor/vditor'; // 本地自托管，禁止外部 CDN（锁版本入库）
-$config->mdeditor->version      = '0.2.19'; // 资源版本：拼到 mdeditor.js 的 ?v= 上做缓存失效（findings §14 缓存滞后）
+$config->mdeditor->version      = '0.2.20'; // 资源版本：拼到 mdeditor.js 的 ?v= 上做缓存失效（findings §14 缓存滞后）
 $config->mdeditor->stepAsideVersion = '21.7.6'; // R8 让路版本阈值：当前禅道 >= 此版本时插件静默让路（与原生入口特性探测取并集）
 
 /* 权限委派：mdeditor 路由复用 doc 权限，零 SQL、零 hook（commonModel::hasPriv 一手确认，findings §13）。 */
