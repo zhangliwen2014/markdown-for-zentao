@@ -9,7 +9,7 @@
  *
  * 通道：\zin\pageJS（updatePageJS 同步执行，SPA 与整页加载都跑；html 通道会被 updatePageWithHtml 剥 <script>）。
  * 事件：首次注入 + 监听 pagerender/pagecaheload/pageload + MutationObserver 兜 dtable 分页/排序后行重建。
- * 目标行：#docTable tbody tr；docID 从行内 a.doc-name[href] 提取（doc-view-N.html / docID=N）。
+ * 目标行：#docTable tbody tr；docID 从行内标题链接 a[href*="/doc-view-"] 的 href 提取（dtable 无 doc-name class）。
  * 幂等：tr.dataset.mdexp 标记；已注入跳过。target=_blank 避开 SPA _self 拦截（同 view 页修复）。
  */
 global $config, $app;
@@ -26,7 +26,7 @@ $js = '(function(){var C=' . $confJson . ';'
     . 'function pid(a){var h=a&&a.getAttribute&&a.getAttribute("href")||"";var m=h.match(/(?:doc-view-|docID=)([0-9]+)/);return m?m[1]:"";}'
     . 'function ins(){var rows=document.querySelectorAll("#docTable tbody tr");'
     . 'for(var i=0;i<rows.length;i++){var tr=rows[i];if(tr.dataset.mdexp==="1")continue;'
-    . 'var a=tr.querySelector("a.doc-name");var id=a?pid(a):"";if(!id)continue;'
+    . 'var a=tr.querySelector("a[href*=\"/doc-view-\"]")||tr.querySelector("a[href*=\"docID=\"]");var id=a?pid(a):"";if(!id)continue;'
     . 'var tds=tr.querySelectorAll("td");if(!tds.length)continue;var last=tds[tds.length-1];'
     . 'var btn=document.createElement("a");btn.href=mk(id);btn.className="btn btn-link size-sm square mdexport-btn";'
     . 'btn.target="_blank";btn.rel="noopener";btn.title=C.hint;btn.setAttribute("aria-label",C.hint);'
